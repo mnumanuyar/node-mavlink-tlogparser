@@ -483,6 +483,10 @@ export class MavLinkPacketSplitter extends Transform {
   protected readonly log = Logger.getLogger(this)
 
   private buffer = Buffer.from([])
+  /**
+   * Buffer to read time that holds 8 bytes before current buffer. If there aren't 8 bytes to put here, just contains existing ones
+   */
+  private timeBuffer = Buffer.from([])
   private onCrcError = null
   private _validPackagesCount = 0
   private _unknownPackagesCount = 0
@@ -508,8 +512,11 @@ export class MavLinkPacketSplitter extends Transform {
         break
       }
 
-      // fast-forward the buffer to the first start byte
       if (offset > 0) {
+        // add skipped section to end of the time buffer and take last 8 bytes
+        this.timeBuffer = Buffer.concat([ this.timeBuffer,  this.buffer.subarray(0,offset) ]).subarray(-8)
+
+        // fast-forward the buffer to the first start byte
         this.buffer = this.buffer.slice(offset)
       }
 
@@ -545,10 +552,15 @@ export class MavLinkPacketSplitter extends Transform {
       switch (this.validatePacket(buffer, Protocol)) {
         case PacketValidationResult.VALID:
           this.log.debug('Found a valid packet')
+          this.parseTLogTime(this.timeBuffer)
           this._validPackagesCount++
           this.push(buffer)
           // truncate the buffer to remove the current message
           this.buffer = this.buffer.slice(expectedBufferLength)
+
+          //empty the current time buffer as all of the unkown bytes are in the buffer
+          this.timeBuffer.subarray(0,0)
+
           break
         case PacketValidationResult.INVALID:
           this.log.debug('Found an invalid packet - skipping')
@@ -652,6 +664,21 @@ export class MavLinkPacketSplitter extends Transform {
     }
   }
 
+/**
+ * 
+ * @param buffer buffer with the time info. Must be 8 bytes
+ * @returns Date object if parseing is succesfull. undefined if failed to parse
+ */
+  private parseTLogTime(buffer: Buffer){
+    if (buffer.length != 8 ){
+      this.log.debug('did not parse tlog. tlog buffer length should be 8 but is: ',tlogTime)
+      return
+    }  
+    var parsedBETime = buffer.readBigUInt64BE()
+    var tlogTime = new Date(Number(parsedBETime)/1000)
+    this.log.info('parsed tlog time',tlogTime)
+    return tlogTime
+  }
   /**
    * Number of invalid packages
    */
